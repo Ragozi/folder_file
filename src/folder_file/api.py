@@ -11,7 +11,8 @@ from urllib.parse import urlencode
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from folder_file import __version__, accounts as accounts_mod
@@ -394,6 +395,32 @@ def create_app() -> FastAPI:
         if not j:
             raise HTTPException(status_code=404, detail="Job not found")
         return j.public_dict()
+
+    # ---- bundled UI ----
+    # When packaged for distribution, the React build is dropped at
+    # src/folder_file/web/ at build time. If present, mount it: assets are
+    # served directly, and any non-API path falls back to index.html so
+    # client-side routing works.
+    web_dir = Path(__file__).parent / "web"
+    if web_dir.is_dir() and (web_dir / "index.html").is_file():
+        # Common Vite/CRA asset directories
+        for sub in ("assets", "static"):
+            sub_dir = web_dir / sub
+            if sub_dir.is_dir():
+                app.mount(f"/{sub}", StaticFiles(directory=sub_dir), name=f"web_{sub}")
+
+        @app.get("/", include_in_schema=False)
+        def web_root():
+            return FileResponse(web_dir / "index.html")
+
+        # SPA catch-all: this is registered last so explicit API routes
+        # (/healthz, /accounts, /auth/*, /run, /jobs/*) take precedence.
+        @app.get("/{full_path:path}", include_in_schema=False)
+        def web_spa(full_path: str):
+            target = web_dir / full_path
+            if target.is_file():
+                return FileResponse(target)
+            return FileResponse(web_dir / "index.html")
 
     return app
 

@@ -1,0 +1,2 @@
+This directory is populated at build time with the bundled UI's static React build.
+At runtime, if it contains index.html, the API server serves it at / with SPA routing.

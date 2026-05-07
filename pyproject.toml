@@ -21,6 +21,8 @@ dependencies = [
     "google-auth-oauthlib>=1.2",
     "msal>=1.30",
     "httpx>=0.27",
+    "pystray>=0.19",
+    "Pillow>=10.0",
 ]
 
 [project.optional-dependencies]
@@ -32,6 +34,9 @@ dev = [
 [project.scripts]
 folder_file = "folder_file.cli:main"
 folder_file_server = "folder_file.server:main"
+
+[project.gui-scripts]
+folder_file_app = "folder_file.tray:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
