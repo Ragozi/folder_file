@@ -17,7 +17,9 @@ from folder_file.oauth.gmail import OAuthConfigError
 
 
 def _redirect_uri() -> str:
-    return f"http://{DEFAULT_API_HOST}:{DEFAULT_API_PORT}/auth/microsoft/callback"
+    # Azure rejects http://127.0.0.1 for Web redirect URIs — must be "localhost".
+    # Server still binds to 127.0.0.1; localhost resolves there.
+    return f"http://localhost:{DEFAULT_API_PORT}/auth/microsoft/callback"
 
 
 def _build_app() -> msal.PublicClientApplication:

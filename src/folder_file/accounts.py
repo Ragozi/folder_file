@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 from dataclasses import asdict, dataclass, field
@@ -8,7 +9,7 @@ from typing import Optional
 
 import keyring
 
-from folder_file.config import KEYRING_TOKEN_SERVICE, accounts_file
+from folder_file.config import KEYRING_TOKEN_SERVICE, accounts_file, state_dir
 
 
 @dataclass
@@ -72,6 +73,10 @@ def delete_account(account_id: str, path: Path | None = None) -> bool:
     raw["accounts"] = [a for a in raw.get("accounts", []) if a.get("id") != account_id]
     _save_raw(raw, path)
     try:
+        _secret_path(account_id).unlink(missing_ok=True)
+    except OSError:
+        pass
+    try:
         keyring.delete_password(KEYRING_TOKEN_SERVICE, account_id)
     except Exception:
         pass
@@ -82,21 +87,59 @@ def make_account_id(provider: str, email: str) -> str:
     return f"{provider}:{email.lower()}"
 
 
-# --- secret blob (tokens or password) per account, JSON-encoded in keyring ---
+# --- secret blob (tokens or password) per account, file-backed ---
+#
+# Stored as JSON in %APPDATA%\folder_file\secrets\<sha256-of-account-id>.json
+# (XDG equivalent on POSIX). The keyring approach we tried first hits the
+# Windows Credential Manager 2.5KB blob ceiling — Microsoft's combined
+# access+refresh token JSON exceeds it, so the value silently truncated.
+# File-based storage has the same trust boundary (user-only access to %APPDATA%)
+# without the size limit.
+
+
+def _secret_dir() -> Path:
+    p = state_dir() / "secrets"
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def _secret_path(account_id: str) -> Path:
+    safe = hashlib.sha256(account_id.encode("utf-8")).hexdigest()
+    return _secret_dir() / f"{safe}.json"
 
 
 def store_secret(account_id: str, payload: dict) -> None:
-    keyring.set_password(KEYRING_TOKEN_SERVICE, account_id, json.dumps(payload))
+    p = _secret_path(account_id)
+    tmp = p.with_suffix(".tmp")
+    with tmp.open("w", encoding="utf-8") as f:
+        json.dump(payload, f)
+    tmp.replace(p)
 
 
 def load_secret(account_id: str) -> Optional[dict]:
+    p = _secret_path(account_id)
+    if p.exists():
+        try:
+            with p.open("r", encoding="utf-8") as f:
+                return json.load(f)
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    # Fallback: read from legacy keyring storage if it's there (for installs
+    # that connected accounts before the file-backed switch).
     raw = keyring.get_password(KEYRING_TOKEN_SERVICE, account_id)
     if not raw:
         return None
     try:
-        return json.loads(raw)
+        data = json.loads(raw)
     except json.JSONDecodeError:
         return None
+    # Migrate forward so the next load skips the keyring branch.
+    try:
+        store_secret(account_id, data)
+    except OSError:
+        pass
+    return data
 
 
 def update_oauth_tokens(

@@ -19,9 +19,12 @@ from folder_file.downloader import extract_attachments, next_filename, save
 class SweepParams:
     folder: str
     prefix: str
-    allowed_exts: tuple[str, ...]
     output_dir: Path
     post_action: str = "leave"  # "leave" | "delete"
+    include_embedded: bool = True
+    embedded_exts: tuple[str, ...] = ()
+    include_attachments: bool = True
+    attachment_exts: tuple[str, ...] = ()
 
 
 @dataclass
@@ -67,16 +70,23 @@ def sweep_once(
 
         for uid, msg in imap_client.iter_messages(conn, params.folder, since_uid=last_uid):
             new_last_uid = max(new_last_uid, uid)
-            attachments = extract_attachments(msg, params.allowed_exts)
+            attachments = extract_attachments(
+                msg,
+                include_embedded=params.include_embedded,
+                embedded_exts=params.embedded_exts,
+                include_attachments=params.include_attachments,
+                attachment_exts=params.attachment_exts,
+            )
             if not attachments:
                 continue
 
             subject = _format_subject(msg)
             date = _format_date(msg)
-            for original_name, payload in attachments:
+            for original_name, payload, source in attachments:
                 fname = next_filename(params.prefix, counter, original_name)
                 path = save(params.output_dir, fname, payload)
-                log(f"  {path.name}  <- {subject!r} ({date})")
+                tag = "[embed]" if source == "embedded" else "[attach]"
+                log(f"  {path.name} {tag} <- {subject!r} ({date})")
                 result.files.append(str(path))
                 counter += 1
                 result.saved += 1

@@ -3,6 +3,7 @@ from __future__ import annotations
 import secrets
 import threading
 import time
+import traceback
 import webbrowser
 from pathlib import Path
 from typing import Any
@@ -66,9 +67,18 @@ class RunIn(BaseModel):
     account_id: str
     folder: str
     prefix: str = Field(min_length=1, max_length=64)
-    allowed_exts: list[str] = Field(default_factory=list)
     output_dir: str
     post_action: str = "leave"
+
+    include_embedded: bool = True
+    embedded_exts: list[str] = Field(default_factory=list)
+    include_attachments: bool = True
+    attachment_exts: list[str] = Field(default_factory=list)
+
+    # Backwards compat: old clients sending a single allowed_exts list.
+    # If new fields are at defaults (both include flags True, both ext lists
+    # empty) AND allowed_exts is set, apply allowed_exts to both sources.
+    allowed_exts: list[str] = Field(default_factory=list)
 
 
 class HealthOut(BaseModel):
@@ -92,7 +102,21 @@ def create_app() -> FastAPI:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        expose_headers=["*"],
     )
+
+    # Chrome's Private Network Access requires the local server to opt-in to
+    # being called from public-internet origins (i.e. https://*.lovable.app).
+    # The PNA preflight is an OPTIONS request with
+    #   Access-Control-Request-Private-Network: true
+    # The server must respond with
+    #   Access-Control-Allow-Private-Network: true
+    @app.middleware("http")
+    async def add_private_network_header(request, call_next):
+        response = await call_next(request)
+        if request.method == "OPTIONS":
+            response.headers["Access-Control-Allow-Private-Network"] = "true"
+        return response
 
     @app.get("/healthz", response_model=HealthOut)
     def healthz() -> HealthOut:
@@ -209,42 +233,48 @@ def create_app() -> FastAPI:
         state: str | None = None,
         error: str | None = None,
     ):
-        if error:
-            return HTMLResponse(_callback_html(False, f"Google returned error: {error}"))
-        if not code or not state:
-            return HTMLResponse(_callback_html(False, "Missing code or state."))
-        payload = _pop_flow(state)
-        if not payload:
-            return HTMLResponse(_callback_html(False, "Auth state expired or unknown."))
-
-        flow = payload["flow"]
-        full_url = (
-            f"http://{DEFAULT_API_HOST}:{DEFAULT_API_PORT}/auth/gmail/callback?"
-            + urlencode({"code": code, "state": state})
-        )
         try:
-            tokens = gmail_oauth.complete_authorization(flow, full_url)
-        except Exception as e:
-            return HTMLResponse(_callback_html(False, f"Token exchange failed: {e}"))
+            if error:
+                return HTMLResponse(_callback_html(False, f"Google returned error: {error}"))
+            if not code or not state:
+                return HTMLResponse(_callback_html(False, "Missing code or state."))
+            payload = _pop_flow(state)
+            if not payload:
+                return HTMLResponse(_callback_html(False, "Auth state expired or unknown."))
 
-        account = Account(
-            id=make_account_id("gmail", tokens["email"]),
-            provider="gmail",
-            email=tokens["email"],
-            imap_host="imap.gmail.com",
-            imap_port=993,
-            auth_type="oauth",
-        )
-        accounts_mod.upsert_account(account)
-        accounts_mod.store_secret(
-            account.id,
-            {
-                "access_token": tokens["access_token"],
-                "refresh_token": tokens["refresh_token"],
-                "expires_at": tokens["expires_at"],
-            },
-        )
-        return HTMLResponse(_callback_html(True, f"Connected {tokens['email']}"))
+            flow = payload["flow"]
+            full_url = (
+                f"http://{DEFAULT_API_HOST}:{DEFAULT_API_PORT}/auth/gmail/callback?"
+                + urlencode({"code": code, "state": state})
+            )
+            try:
+                tokens = gmail_oauth.complete_authorization(flow, full_url)
+            except Exception as e:
+                return HTMLResponse(_callback_html(False, f"Token exchange failed: {e}"))
+
+            account = Account(
+                id=make_account_id("gmail", tokens["email"]),
+                provider="gmail",
+                email=tokens["email"],
+                imap_host="imap.gmail.com",
+                imap_port=993,
+                auth_type="oauth",
+            )
+            accounts_mod.upsert_account(account)
+            accounts_mod.store_secret(
+                account.id,
+                {
+                    "access_token": tokens["access_token"],
+                    "refresh_token": tokens["refresh_token"],
+                    "expires_at": tokens["expires_at"],
+                },
+            )
+            return HTMLResponse(_callback_html(True, f"Connected {tokens['email']}"))
+        except Exception as e:
+            traceback.print_exc()
+            return HTMLResponse(
+                _callback_html(False, f"Unexpected error after sign-in: {type(e).__name__}: {e}")
+            )
 
     # ---- Microsoft OAuth ----
 
@@ -265,41 +295,47 @@ def create_app() -> FastAPI:
         error: str | None = None,
         error_description: str | None = None,
     ):
-        if error:
-            return HTMLResponse(
-                _callback_html(False, f"Microsoft returned error: {error}: {error_description}")
-            )
-        if not code or not state:
-            return HTMLResponse(_callback_html(False, "Missing code or state."))
-        payload = _pop_flow(state)
-        if not payload:
-            return HTMLResponse(_callback_html(False, "Auth state expired or unknown."))
-
         try:
-            tokens = ms_oauth.complete_authorization(
-                payload["flow"], {"code": code, "state": state}
-            )
-        except Exception as e:
-            return HTMLResponse(_callback_html(False, f"Token exchange failed: {e}"))
+            if error:
+                return HTMLResponse(
+                    _callback_html(False, f"Microsoft returned error: {error}: {error_description}")
+                )
+            if not code or not state:
+                return HTMLResponse(_callback_html(False, "Missing code or state."))
+            payload = _pop_flow(state)
+            if not payload:
+                return HTMLResponse(_callback_html(False, "Auth state expired or unknown."))
 
-        account = Account(
-            id=make_account_id("microsoft", tokens["email"]),
-            provider="microsoft",
-            email=tokens["email"],
-            imap_host="outlook.office365.com",
-            imap_port=993,
-            auth_type="oauth",
-        )
-        accounts_mod.upsert_account(account)
-        accounts_mod.store_secret(
-            account.id,
-            {
-                "access_token": tokens["access_token"],
-                "refresh_token": tokens["refresh_token"],
-                "expires_at": tokens["expires_at"],
-            },
-        )
-        return HTMLResponse(_callback_html(True, f"Connected {tokens['email']}"))
+            try:
+                tokens = ms_oauth.complete_authorization(
+                    payload["flow"], {"code": code, "state": state}
+                )
+            except Exception as e:
+                return HTMLResponse(_callback_html(False, f"Token exchange failed: {e}"))
+
+            account = Account(
+                id=make_account_id("microsoft", tokens["email"]),
+                provider="microsoft",
+                email=tokens["email"],
+                imap_host="outlook.office365.com",
+                imap_port=993,
+                auth_type="oauth",
+            )
+            accounts_mod.upsert_account(account)
+            accounts_mod.store_secret(
+                account.id,
+                {
+                    "access_token": tokens["access_token"],
+                    "refresh_token": tokens["refresh_token"],
+                    "expires_at": tokens["expires_at"],
+                },
+            )
+            return HTMLResponse(_callback_html(True, f"Connected {tokens['email']}"))
+        except Exception as e:
+            traceback.print_exc()
+            return HTMLResponse(
+                _callback_html(False, f"Unexpected error after sign-in: {type(e).__name__}: {e}")
+            )
 
     # ---- run / jobs ----
 
@@ -317,13 +353,34 @@ def create_app() -> FastAPI:
                 status_code=400, detail=f"Cannot create output_dir: {e}"
             )
 
+        embedded_exts = list(body.embedded_exts)
+        attachment_exts = list(body.attachment_exts)
+        # Legacy fallback
+        if (
+            not embedded_exts
+            and not attachment_exts
+            and body.allowed_exts
+            and body.include_embedded
+            and body.include_attachments
+        ):
+            embedded_exts = list(body.allowed_exts)
+            attachment_exts = list(body.allowed_exts)
+
         params = SweepParams(
             folder=body.folder,
             prefix=body.prefix,
-            allowed_exts=normalize_extensions(body.allowed_exts),
             output_dir=out_dir,
             post_action=body.post_action,
+            include_embedded=body.include_embedded,
+            embedded_exts=normalize_extensions(embedded_exts),
+            include_attachments=body.include_attachments,
+            attachment_exts=normalize_extensions(attachment_exts),
         )
+        if not (params.include_embedded or params.include_attachments):
+            raise HTTPException(
+                status_code=400,
+                detail="At least one of include_embedded or include_attachments must be true.",
+            )
         job = jobs.submit_sweep(account, params)
         return {"job_id": job.id}
 

@@ -23,38 +23,71 @@ def normalize_extensions(exts: list[str] | tuple[str, ...]) -> tuple[str, ...]:
 
 
 def extract_attachments(
-    msg: Message, allowed_exts: tuple[str, ...]
-) -> list[tuple[str, bytes]]:
-    """Walk a message and return [(original_filename, raw_bytes), ...] for attachments
-    whose extension is in allowed_exts. Inline parts are skipped unless their disposition
-    says attachment."""
-    out: list[tuple[str, bytes]] = []
-    if not msg.is_multipart() and msg.get_filename() is None:
-        return out
+    msg: Message,
+    *,
+    include_embedded: bool = True,
+    embedded_exts: tuple[str, ...] = (),
+    include_attachments: bool = True,
+    attachment_exts: tuple[str, ...] = (),
+) -> list[tuple[str, bytes, str]]:
+    """Walk a message and return [(filename, raw_bytes, source), ...]
+    where source is "embedded" or "attachment".
 
-    allow_all = not allowed_exts
+    Classification:
+    - "embedded": part has Content-ID OR Content-Disposition contains "inline".
+      These are the cid:-referenced images Outlook produces when you paste a
+      picture into a message body.
+    - "attachment": everything else with a filename — files added via
+      "Attach file" / drag-drop into the attachments tray.
+
+    Filtering (applied per-source):
+    - If include_<source> is False, skip parts of that source entirely.
+    - If <source>_exts is non-empty, the part's extension (lowercased) must
+      be in the list. Empty list means "any extension".
+
+    HTML <img src="https://..."> URLs are NOT followed; those bytes don't
+    live in the email and would require a separate fetch."""
+    out: list[tuple[str, bytes, str]] = []
 
     for part in msg.walk():
         if part.is_multipart():
             continue
+
         disp = (part.get("Content-Disposition") or "").lower()
         filename = part.get_filename()
+        maintype = part.get_content_maintype()
+        subtype = (part.get_content_subtype() or "").lower()
+        cid = part.get("Content-ID")
+
+        is_embedded = bool(cid) or "inline" in disp
+        source = "embedded" if is_embedded else "attachment"
+
+        if source == "embedded" and not include_embedded:
+            continue
+        if source == "attachment" and not include_attachments:
+            continue
+
         if not filename:
-            continue
-        if "attachment" not in disp:
-            ext_only = Path(filename).suffix.lower()
-            if not (allow_all or ext_only in allowed_exts):
+            # No explicit filename. Only keep this part if it's clearly an
+            # embedded image (image MIME type AND already classified embedded).
+            # Otherwise it's likely the message body, a signature, etc.
+            if not (is_embedded and maintype == "image"):
                 continue
+            ext_synth = "jpg" if subtype == "jpeg" else (subtype or "bin")
+            filename = f"embedded.{ext_synth}"
+
         ext = Path(filename).suffix.lower()
-        if not (allow_all or ext in allowed_exts):
+        allowed = embedded_exts if source == "embedded" else attachment_exts
+        if allowed and ext not in allowed:
             continue
+
         try:
             payload = part.get_payload(decode=True)
         except Exception:
             payload = None
         if not payload:
             continue
-        out.append((filename, payload))
+        out.append((filename, payload, source))
     return out
 
 

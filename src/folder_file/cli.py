@@ -189,16 +189,19 @@ def main() -> None:
     params = SweepParams(
         folder=folder,
         prefix=prefix,
-        allowed_exts=allowed_exts,
         output_dir=output_dir,
         post_action=post_action,
+        include_embedded=True,
+        embedded_exts=allowed_exts,
+        include_attachments=True,
+        attachment_exts=allowed_exts,
     )
 
     print()
     print(f"  account     : {account.email}")
     print(f"  folder      : {params.folder}")
     print(f"  prefix      : {params.prefix}")
-    print(f"  extensions  : {', '.join(params.allowed_exts) or '(all)'}")
+    print(f"  extensions  : {', '.join(allowed_exts) or '(all)'}  (applied to embedded + attached)")
     print(f"  output      : {params.output_dir}")
     print(f"  post-action : {params.post_action}")
     print(f"  run mode    : {run_mode}" + (f" (every {interval}m)" if run_mode == "watch" else ""))

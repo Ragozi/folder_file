@@ -18,7 +18,8 @@ GOOGLE_SCOPES = [
 ]
 MICROSOFT_SCOPES = [
     "https://outlook.office.com/IMAP.AccessAsUser.All",
-    "offline_access",
+    # MSAL adds offline_access, openid, profile automatically — passing them
+    # explicitly raises ValueError("You cannot use any scope value that is reserved").
 ]
 MICROSOFT_AUTHORITY = "https://login.microsoftonline.com/common"
 
