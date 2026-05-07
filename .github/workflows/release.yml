@@ -6,13 +6,13 @@ on:
       - "v*"
   workflow_dispatch:
 
-# Set this to the URL of the Lovable-managed UI repo once it's connected.
-# It can be in the same org or a different one. The workflow shallow-clones
-# it, runs `npm run build`, and copies the dist output into
-# src/folder_file/web before PyInstaller bundles everything.
+# UI source: the Lovable-managed repo that holds the React frontend.
+# Format: owner/repo (actions/checkout takes owner/repo, not a full URL).
+# Workflow shallow-clones this repo, runs `npm run build`, and copies the
+# dist output into src/folder_file/web before PyInstaller bundles everything.
 env:
-  UI_REPO: ""        # e.g. https://github.com/Ragozi/folder-file-ui
-  UI_REPO_REF: main  # branch or tag in the UI repo
+  UI_REPO: "Ragozi/folder-file-ui"
+  UI_REPO_REF: main
 
 jobs:
   build_ui:
