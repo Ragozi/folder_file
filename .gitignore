@@ -12,3 +12,7 @@ dist/
 state/
 *.log
 .DS_Store
+
+# Bundled UI (populated at build time by CI; not tracked in source).
+src/folder_file/web/*
+!src/folder_file/web/.gitkeep
