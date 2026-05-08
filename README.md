@@ -1,58 +1,98 @@
 # folder_file
 
-A small local app that connects to your email over IMAP, walks a folder you choose, and saves attachments to your computer with names like `Aria_001.jpg`, `Aria_002.pdf`, ...
+A small desktop app that connects to your email, walks a folder you choose (e.g. `INBOX/Aria`), and saves all the attachments and pasted-in pictures from that folder to your computer with sequential names like `Aria_001.jpg`, `Aria_002.pdf`, ...
 
-Two ways to use it:
+Designed for one specific job: pulling years of pictures out of email folders into a real folder on your PC.
 
-- **CLI** (`python -m folder_file`) — interactive prompts, app-password auth.
-- **Local API + Lovable UI** (`python -m folder_file.server`) — Gmail / Microsoft OAuth ("Select a Google account…"), web UI built in [Lovable](https://lovable.dev) calls a small FastAPI server running on your PC.
+- Works with **Outlook / Microsoft 365** (OAuth — "Sign in with Microsoft").
+- Works with **Gmail** (OAuth — "Sign in with Google").
+- Works with **any IMAP provider** via app password (iCloud, FastMail, generic IMAP).
+- Saves both **regular attachments** AND **embedded pictures** (the kind you paste into the email body) — with independent filters for each source.
+- Continues numbering across runs (re-running pulls only new pictures).
 
-The server runs on `http://127.0.0.1:8765`. Files are written to whichever folder on your PC you point at.
+[Latest release →](https://github.com/Ragozi/folder_file/releases/latest)
 
-## Install
+## Quick start (just want to use it)
 
-```powershell
-git clone https://github.com/Ragozi/folder_file.git
-cd folder_file
-python -m venv .venv
-.venv\Scripts\activate
-pip install -e .[dev]
-```
+1. Go to [Releases](https://github.com/Ragozi/folder_file/releases/latest) and download:
+   - **Windows** → `folder_file_setup.exe` (recommended — proper installer with Start menu shortcut), or `folder_file-windows.zip` (portable, just unzip and double-click).
+   - **Mac** → `folder_file-macos.zip`. Unzip, drag `folder_file.app` to Applications.
 
-## CLI mode (app password)
+2. **First-launch warning:** the app isn't code-signed (would cost ~$300/yr just for that). When you double-click for the first time:
+   - **Windows SmartScreen:** "Windows protected your PC" → click *More info* → *Run anyway*.
+   - **macOS Gatekeeper:** right-click the .app → *Open* → *Open* on the warning dialog.
+   You only have to do this on first launch.
 
-```powershell
-python -m folder_file
-```
+3. The browser opens to `http://127.0.0.1:8765` showing the control panel. A small folder icon also appears in your system tray (Windows) or menu bar (Mac) — that's where the app lives.
 
-Generate an app password first:
-- **Gmail** — https://myaccount.google.com/apppasswords (requires 2-step verification)
-- **Outlook / M365** — https://account.microsoft.com/security → *Advanced security* → *App passwords*
-- **iCloud** — https://account.apple.com → *Sign-in and security* → *App-specific passwords*
+4. Connect an email account. **Three ways**, listed easiest-first:
 
-## Server mode (OAuth + UI)
+   | Path | What you do | OAuth setup needed |
+   |---|---|---|
+   | **IMAP + app password** | Click *Add IMAP*, paste email + 16-char app password | None |
+   | **Gmail OAuth** | Click *Connect Gmail*, sign in | Yes — see below |
+   | **Microsoft OAuth** | Click *Connect Microsoft*, sign in | Yes — see below |
 
-```powershell
-python -m folder_file.server
-# -> folder_file API listening on http://127.0.0.1:8765
-```
+5. Pick a folder, type a prefix (e.g. `Aria`), choose what to download, click **Run once**.
 
-The server exposes a small REST API. The Lovable frontend talks to it. CORS is open to `*.lovable.app`, `*.lovable.dev`, `*.lovableproject.com`, and `localhost`.
+6. To quit, right-click the system-tray icon → **Quit**.
 
-### One-time OAuth client setup
+State and tokens live in `%APPDATA%\folder_file\` (Windows) or `~/Library/Application Support/folder_file/` (Mac). Files you download go to whatever output folder you point at — usually `Downloads\<prefix>\`.
 
-OAuth requires a *client ID* per provider. You register a client once in each provider's developer console and tell the local app about it. Two ways to provide them:
+## Generating an app password (the no-OAuth-setup path)
 
-**Option A** — environment variables (recommended for development):
+Most providers require 2-step verification before app passwords appear in their UI.
+
+| Provider | Where |
+|---|---|
+| Gmail | https://myaccount.google.com/apppasswords (needs 2-step verification on) |
+| Outlook personal | **Likely won't work** — Microsoft has disabled basic-auth IMAP on personal `@outlook.com` accounts. Use Microsoft OAuth instead. |
+| Microsoft 365 (work) | Your tenant admin's MFA / app-password page if enabled |
+| iCloud | https://account.apple.com → Sign-In and Security → App-Specific Passwords |
+| FastMail | Settings → Password & Security → App Passwords |
+
+If your provider's IMAP server isn't auto-detected from the email domain, you can supply the host/port manually in the *Add IMAP* modal.
+
+## Gmail OAuth setup (one-time, ~5 min)
+
+The OAuth flow needs a Google Cloud project. This is per-user — each person who installs folder_file needs their own client ID, OR you (the distributor) can ship one with the app.
+
+1. https://console.cloud.google.com → *Create project* (any name).
+2. **APIs & Services** → **Library** → enable **Gmail API**.
+3. **APIs & Services** → **OAuth consent screen** → *External* → fill in app name, support email.
+   - Scopes step: add `https://mail.google.com/`.
+   - Test users: add the Gmail address you'll be reading from.
+4. **Credentials** → **+ Create credentials** → **OAuth client ID** → **Web application**.
+   - Authorized redirect URI: `http://127.0.0.1:8765/auth/gmail/callback`
+5. Copy the client ID and secret. Set them via env vars or `oauth_clients.json` (see *Configuring OAuth client IDs* below).
+
+## Microsoft OAuth setup (one-time, ~10 min)
+
+Required for personal `@outlook.com` accounts since Microsoft disabled basic-auth IMAP for them.
+
+1. https://portal.azure.com → search **App registrations** → **+ New registration**.
+2. Name it anything. **Supported account types**: pick *"Accounts in any organizational directory and personal Microsoft accounts"*.
+3. **Redirect URI**: pick **Mobile and desktop applications** (NOT Web — Azure rejects `http://` for the Web platform). Add: `http://localhost:8765/auth/microsoft/callback`.
+4. Click **Register**. On the overview page, copy the **Application (client) ID**.
+5. Left sidebar → **Authentication** → scroll down → **Allow public client flows** = **Yes** → Save.
+6. Left sidebar → **API permissions** → click **+ Add a permission** → **Microsoft Graph** → **Delegated permissions** → check `offline_access`, `openid`, `email` → Add permissions.
+   - The `IMAP.AccessAsUser.All` scope is requested at sign-in time and doesn't need to be pre-added (Office 365 Exchange Online doesn't show in the picker for personal-account-only registrations — that's expected).
+
+## Configuring OAuth client IDs
+
+The app reads OAuth client credentials from one of two places, in order:
+
+**Environment variables** (most useful for development):
 
 ```powershell
 $env:GOOGLE_CLIENT_ID = "xxx.apps.googleusercontent.com"
 $env:GOOGLE_CLIENT_SECRET = "xxx"
 $env:MICROSOFT_CLIENT_ID = "xxx-xxx-xxx-xxx"
-python -m folder_file.server
 ```
 
-**Option B** — drop a JSON file at `%APPDATA%\folder_file\oauth_clients.json`:
+**`oauth_clients.json` file** (for the bundled app):
+
+Create a file at `%APPDATA%\folder_file\oauth_clients.json` (Windows) or `~/Library/Application Support/folder_file/oauth_clients.json` (Mac):
 
 ```json
 {
@@ -66,87 +106,118 @@ python -m folder_file.server
 }
 ```
 
-#### How to get a Google client ID
+Restart the app after creating/editing this file.
 
-1. Go to https://console.cloud.google.com → create a new project (any name).
-2. **APIs & Services** → **Library** → enable **Gmail API**.
-3. **APIs & Services** → **OAuth consent screen** → User type *External* → fill in app name, support email.
-   - Scopes step: add `https://mail.google.com/`.
-   - Test users: add your own Gmail address (so the unverified-app warning doesn't block you).
-4. **Credentials** → **Create credentials** → **OAuth client ID** → **Web application**.
-   - Authorized redirect URI: `http://127.0.0.1:8765/auth/gmail/callback`
-5. Copy the client ID and client secret into env vars or `oauth_clients.json`.
+If a provider's client config is missing, that provider's *Connect* button in the UI will show a 400 error explaining what's missing — IMAP+password still works without any OAuth setup.
 
-#### How to get a Microsoft client ID
+## Embedded vs. attached: how the filter works
 
-1. Go to https://portal.azure.com → **Microsoft Entra ID** → **App registrations** → **New registration**.
-2. Name it anything. Supported account types: *Accounts in any organizational directory and personal Microsoft accounts*.
-3. Redirect URI: pick **Web**, set to `http://127.0.0.1:8765/auth/microsoft/callback`.
-4. Register. Copy the **Application (client) ID** into env var or `oauth_clients.json`.
-5. Under **Authentication** → enable *Allow public client flows* = **Yes**.
-6. Under **API permissions** → **Add a permission** → **APIs my organization uses** → search **Office 365 Exchange Online** → Delegated permissions → check `IMAP.AccessAsUser.All` → **Add permissions**.
-7. Also add **Microsoft Graph** → Delegated → `offline_access` and `openid` and `email`.
+The app distinguishes two sources of pictures in a single email:
 
-### Connecting an account
+- **Embedded pictures** — images pasted into the email body (Outlook "insert picture inline", drag-drop into compose). These are MIME parts referenced by `cid:` from the HTML body.
+- **File attachments** — files added via *Attach file* / drag-drop into the attachments tray.
 
-The Lovable UI gives you Connect buttons. Behind the scenes:
+The Run config has independent toggles + extension filters for each. Examples:
+- "Pull only embedded pictures, ignore attached PDFs": Embedded ON (`.jpg .png .heic`), Attachments OFF.
+- "Pull all attachments and embedded pics": both ON.
+- "Pull only attached PDFs": Embedded OFF, Attachments ON (`.pdf`).
 
-1. UI calls `POST /auth/gmail/start` (or `microsoft/start`).
-2. Server returns `{auth_url}`. UI opens it in a new window.
-3. You sign in with Google / Microsoft and grant the IMAP scope.
-4. Provider redirects to `http://127.0.0.1:8765/auth/gmail/callback?code=...`.
-5. Server exchanges the code for tokens, stores them in Windows Credential Manager, returns a "Connected as ___" page.
-6. UI polls `GET /accounts` and shows the new account.
+What's NOT extracted: external `<img src="https://...">` URLs in the HTML body (iCloud share links, Google Photos albums) — those bytes don't live in the email and would require a separate fetch.
 
-Refresh tokens are stored in keyring; subsequent runs auto-refresh access tokens — no re-prompting until you delete the account.
+## Running from source (developers)
 
-## API summary
+```powershell
+git clone https://github.com/Ragozi/folder_file.git
+cd folder_file
+python -m venv .venv
+.venv\Scripts\activate
+pip install -e .[dev]
+pytest
+
+# Three ways to launch:
+python -m folder_file              # interactive CLI (app password only)
+python -m folder_file.server       # API server, no tray icon, no auto-browser
+python -m folder_file.tray         # tray app: API + browser + tray icon
+```
+
+## API reference
+
+The packaged app is a small FastAPI server at `http://127.0.0.1:8765` plus a React UI at the same origin. The UI is in a separate repo: [Ragozi/folder-file-ui](https://github.com/Ragozi/folder-file-ui).
 
 | Method | Path | Purpose |
-| ------ | ---- | ------- |
-| GET    | `/healthz` | Liveness |
+|---|---|---|
+| GET    | `/healthz` | Liveness probe |
 | GET    | `/providers` | Common extensions + IMAP host hints |
 | GET    | `/accounts` | List saved accounts |
 | DELETE | `/accounts/{id}` | Forget account + tokens |
 | GET    | `/accounts/{id}/folders` | List IMAP folders |
-| GET    | `/accounts/{id}/state` | Show counters per folder |
+| GET    | `/accounts/{id}/state` | Counter + last-UID per folder |
 | POST   | `/accounts/{id}/state/reset?folder=...` | Reset counter for a folder |
-| POST   | `/accounts/password` | Add an IMAP+password account |
-| POST   | `/auth/gmail/start` | Begin Gmail OAuth |
-| GET    | `/auth/gmail/callback` | OAuth redirect (used by Google) |
+| POST   | `/accounts/password` | Add IMAP+password account |
+| POST   | `/auth/gmail/start` | Begin Gmail OAuth → returns `{auth_url}` |
+| GET    | `/auth/gmail/callback` | OAuth landing page (called by Google) |
 | POST   | `/auth/microsoft/start` | Begin Microsoft OAuth |
-| GET    | `/auth/microsoft/callback` | OAuth redirect (used by Microsoft) |
-| POST   | `/run` | Submit a sweep job |
+| GET    | `/auth/microsoft/callback` | OAuth landing page (called by Microsoft) |
+| POST   | `/run` | Submit a sweep job (returns `{job_id}`) |
 | GET    | `/jobs` | Recent jobs |
-| GET    | `/jobs/{id}` | Job status + log |
+| GET    | `/jobs/{id}` | Job status + streaming log |
 
 `POST /run` body:
 ```json
 {
-  "account_id": "gmail:eric.ragozin@gmail.com",
+  "account_id": "microsoft:eric@outlook.com",
   "folder": "INBOX/Aria",
   "prefix": "Aria",
-  "allowed_exts": [".pdf", ".jpg", ".jpeg", ".png"],
   "output_dir": "C:\\Users\\erago\\Downloads\\Aria",
-  "post_action": "leave"
+  "post_action": "leave",
+  "include_embedded": true,
+  "embedded_exts": [".jpg", ".jpeg", ".png", ".heic"],
+  "include_attachments": true,
+  "attachment_exts": [".jpg", ".jpeg", ".png", ".heic", ".pdf"]
 }
 ```
 
-`GET /jobs/{id}` response:
-```json
-{
-  "id": "ab12...",
-  "status": "running",
-  "saved": 2,
-  "deleted": 0,
-  "files": ["...\\Aria_001.jpg", "...\\Aria_002.jpg"],
-  "log": ["  Aria_001.jpg  <- 'Vacation pics' (2026-04-12)", "..."],
-  "error": null
-}
+## Building installers from source
+
+See [`packaging/README.md`](packaging/README.md) for PyInstaller and Inno Setup details, or just push a `vX.Y.Z` tag to trigger the GitHub Actions release workflow.
+
+## Privacy and security
+
+- **All data stays on your computer.** The app talks to your email provider directly over IMAP. No third-party server, no analytics, no telemetry.
+- **OAuth refresh tokens** live in `%APPDATA%\folder_file\secrets\` as JSON files (Windows user-account scoped — same trust boundary as your Documents folder).
+- **App passwords** are stored the same way.
+- **Per-folder state** (last UID + counter) lives in `%APPDATA%\folder_file\state.json` so re-runs only fetch new emails.
+- The app **never deletes emails by default**. The "Delete from server" option is opt-in, per-run, and confirmation-required.
+
+## Project layout
+
+```
+folder_file/
+├── src/folder_file/
+│   ├── api.py              # FastAPI app + routes
+│   ├── tray.py             # tray-app launcher (entry point for the .exe / .app)
+│   ├── server.py           # plain HTTP server entry point (for dev)
+│   ├── cli.py              # interactive CLI (legacy, no UI)
+│   ├── runner.py           # sweep orchestrator
+│   ├── downloader.py       # extract + classify + filter + save
+│   ├── imap_client.py      # IMAP wrapping (LOGIN + XOAUTH2)
+│   ├── connector.py        # bridges Account → IMAP connection (with token refresh)
+│   ├── accounts.py         # account store + file-backed token storage
+│   ├── oauth/gmail.py      # Google OAuth flow + token refresh
+│   ├── oauth/microsoft.py  # MSAL OAuth flow + token refresh
+│   ├── state.py            # per-folder counter + last-UID persistence
+│   ├── jobs.py             # async job manager (background sweep threads)
+│   ├── config.py           # paths, scopes, IMAP host hints
+│   └── web/                # populated at build time with the React UI
+├── tests/                  # pytest suite (41 tests, no network)
+├── packaging/
+│   ├── folder_file.spec    # PyInstaller config (cross-platform)
+│   └── installer.iss       # Inno Setup script for Windows installer
+├── .github/workflows/
+│   └── release.yml         # CI: builds on every v* tag
+└── pyproject.toml
 ```
 
-## Tests
+## License
 
-```powershell
-pytest
-```
+MIT.
