@@ -7,6 +7,7 @@ venv/
 .env
 build/
 dist/
+packaging/Output/
 .pytest_cache/
 .coverage
 state/

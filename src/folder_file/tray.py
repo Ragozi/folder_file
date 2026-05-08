@@ -5,11 +5,21 @@ by the packaged Windows / Mac builds — no terminal required."""
 
 from __future__ import annotations
 
+import os
 import sys
 import threading
 import time
 import webbrowser
 from pathlib import Path
+
+# Windowed PyInstaller builds (runw.exe / no console) leave sys.stdout and
+# sys.stderr as None. uvicorn's logging writes to stderr at startup and
+# crashes the server thread silently when it's None. Redirect to devnull so
+# the server can start in packaged builds.
+if sys.stdout is None:
+    sys.stdout = open(os.devnull, "w")
+if sys.stderr is None:
+    sys.stderr = open(os.devnull, "w")
 
 import uvicorn
 
